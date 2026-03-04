@@ -1,3 +1,3 @@
-# LumaPixel
+# LumPixel
 
-Gestion de SK6812 RGBW pour Luma
+Gestion de RGB, RGBW pour LumHalo

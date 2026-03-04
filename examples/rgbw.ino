@@ -1,7 +1,7 @@
 #include <LumaPixel.h>
 
 #define LED_PIN 4
-#define NUM_LEDS 144
+#define NUM_LEDS 1
 
 RGB leds[NUM_LEDS];
 LumaPixel strip(leds, NUM_LEDS, LED_PIN);
