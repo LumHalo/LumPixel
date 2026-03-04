@@ -36,6 +36,8 @@ class LumPixel {
 public:
     LumPixel(RGB* pixelBuffer, int numLeds, int gpioPin, LedMode mode = MODE_RGB, rmt_channel_t channel = RMT_CHANNEL_0);
     void show();
+    void setLed(int led, uint8_t r, uint8_t g, uint8_t b);
+    void fill(uint8_t r, uint8_t g, uint8_t b);
 
 private:
     void initGammaTable();

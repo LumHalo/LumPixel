@@ -30,6 +30,14 @@ void LumPixel::setupRMT() {
   rmt_driver_install(rmtChannel, 0, 0);
 }
 
+void LumPixel::fill(uint8_t r, uint8_t g, uint8_t b) {
+  std::fill(buffer, buffer + ledCount, RGB{ r, g, b });
+}
+
+void LumPixel::setLed(int led, uint8_t r, uint8_t g, uint8_t b) {
+  buffer[led] = RGB{ r, g, b };
+}
+
 void LumPixel::show() {
   int itemIndex = 0;
 
@@ -45,7 +53,7 @@ void LumPixel::show() {
       g -= w;
       b -= w;
     }
-    uint8_t bytes[4] = { g, r, b, w };
+    uint8_t bytes[4] = { b, r, g, w };
 
     for (int j = 0; j < bytesPerLed; j++) {      
       for (int bit = 7; bit >= 0; bit--) {
