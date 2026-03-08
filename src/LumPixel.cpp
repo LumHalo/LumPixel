@@ -11,6 +11,12 @@ LumPixel::LumPixel(int numLeds, int gpioPin, LedMode mode, rmt_channel_t channel
   memset(bufferMain, 0, numLeds * sizeof(RGB));
   memset(bufferActive, 0, numLeds * sizeof(RGB));
 
+  accR = new uint32_t[numLeds]();
+  accG = new uint32_t[numLeds]();
+  accB = new uint32_t[numLeds]();
+  if (ledMode == MODE_RGBW) accW = new uint32_t[numLeds]();
+  else accW = nullptr;
+
   bytesPerLed = (ledMode == MODE_RGBW) ? 4 : 3;
   bitsPerLed = bytesPerLed * 8;
 
@@ -31,17 +37,22 @@ LumPixel::LumPixel(int numLeds, int gpioPin, LedMode mode, rmt_channel_t channel
 }
 
 LumPixel::~LumPixel() {
-    if (_taskHandle != NULL) {
-      vTaskDelete(_taskHandle);
-    }
-    rmt_driver_uninstall(rmtChannel);
+  if (_taskHandle != NULL) {
+    vTaskDelete(_taskHandle);
+  }
+  rmt_driver_uninstall(rmtChannel);
 
-    if (_mutex != NULL) {
-      vSemaphoreDelete(_mutex);
-    }
-    delete[] bufferMain;
-    delete[] bufferActive;
-    delete[] rmtItems;
+  if (_mutex != NULL) {
+    vSemaphoreDelete(_mutex);
+  }
+  delete[] bufferMain;
+  delete[] bufferActive;
+  delete[] rmtItems;
+
+  delete[] accR;
+  delete[] accG;
+  delete[] accB;
+  if (accW) delete[] accW;
 }
 
 void LumPixel::setupRMT() {
@@ -79,6 +90,11 @@ void LumPixel::show() {
 
 void LumPixel::initGammaTable() {
   for (int i = 0; i < 256; i++) {
+    if (i == 0) {
+      gammaTableR[0] = gammaTableG[0] = gammaTableB[0] = 0;
+      continue;
+    }
+
     float input = (float)i / 255.0f;
     float brightness = powf(input, GAMMA);
 
@@ -86,16 +102,20 @@ void LumPixel::initGammaTable() {
     float g = brightness * CORRECTION_G * 65535.0f;
     float b = brightness * CORRECTION_B * 65535.0f;
 
-    gammaTableR[i] = (uint16_t)std::min(65535.0f, r + 0.5f);
-    gammaTableG[i] = (uint16_t)std::min(65535.0f, g + 0.5f);
-    gammaTableB[i] = (uint16_t)std::min(65535.0f, b + 0.5f);
+    gammaTableR[i] = (uint16_t)std::max(MIN_VISIBLE, std::min(65535.0f, r + 0.5f));
+    gammaTableG[i] = (uint16_t)std::max(MIN_VISIBLE, std::min(65535.0f, g + 0.5f));
+    gammaTableB[i] = (uint16_t)std::max(MIN_VISIBLE, std::min(65535.0f, b + 0.5f));
+  }
+
+  for (int i = 0; i < 50; ++i) {
+    Serial.printf("i=%d -> R16=%u R8=%u\n", i, gammaTableR[i], gammaTableR[i] >> 8);
   }
 }
 
 void LumPixel::renderTask(void* pvParameters) {
   LumPixel* instance = (LumPixel*)pvParameters;
   TickType_t xLastWakeTime = xTaskGetTickCount();
-  const TickType_t xFrequence = pdMS_TO_TICKS(10);
+  const TickType_t xFrequence = pdMS_TO_TICKS(5);
 
   for (;;) {
     instance->internalShow();
@@ -105,32 +125,50 @@ void LumPixel::renderTask(void* pvParameters) {
 
 void LumPixel::internalShow() {
   int itemIndex = 0;
-  ditherFrameCounter++;
 
   if (xSemaphoreTake(_mutex, portMAX_DELAY)) {
     for (int i = 0; i < numLeds; i++) {
-      uint16_t valR = gammaTableR[bufferActive[i].r];
-      uint16_t valG = gammaTableG[bufferActive[i].g];
-      uint16_t valB = gammaTableB[bufferActive[i].b];
+      uint32_t valR = gammaTableR[bufferActive[i].r];
+      uint32_t valG = gammaTableG[bufferActive[i].g];
+      uint32_t valB = gammaTableB[bufferActive[i].b];
 
-      /* uint8_t r = (valR >> 8) + ((uint8_t)(valR & 0xFF) > ditherFrameCounter ? 1 : 0);
-      uint8_t g = (valG >> 8) + ((uint8_t)(valG & 0xFF) > ditherFrameCounter ? 1 : 0);
-      uint8_t b = (valB >> 8) + ((uint8_t)(valB & 0xFF) > ditherFrameCounter ? 1 : 0); */
-      uint8_t rBase = valR >> 8;
-      uint8_t gBase = valG >> 8;
-      uint8_t bBase = valB >> 8;
-
-      uint8_t r = (rBase == 255) ? 255 : rBase + ((valR & 0xFF) > ditherFrameCounter ? 1 : 0);
-      uint8_t g = (gBase == 255) ? 255 : gBase + ((valG & 0xFF) > ditherFrameCounter ? 1 : 0);
-      uint8_t b = (bBase == 255) ? 255 : bBase + ((valB & 0xFF) > ditherFrameCounter ? 1 : 0);
-
-      uint8_t w = 0;
+      uint32_t valW = 0;
       if (ledMode == MODE_RGBW) {
-          w = std::min(r, std::min(g, b));
-          r -= w; g -= w; b -= w;
+        uint32_t minRGB = std::min(valR, std::min(valG, valB));
+        valW = minRGB;
+        valR -= valW; valG -= valW; valB -= valW;
       }
 
-      uint8_t bytes[4] = { g, r, b, w };
+      uint8_t rOut, gOut, bOut, wOut = 0;
+
+      if (_ditheringEnabled) {
+        uint32_t acc;
+
+        acc = accR[i] + valR;
+        rOut = (uint8_t)(acc >> 8);
+        accR[i] = acc - ((uint32_t)rOut << 8);
+
+        acc = accG[i] + valG;
+        gOut = (uint8_t)(acc >> 8);
+        accG[i] = acc - ((uint32_t)gOut << 8);
+
+        acc = accB[i] + valB;
+        bOut = (uint8_t)(acc >> 8);
+        accB[i] = acc - ((uint32_t)bOut << 8);
+
+        if (ledMode == MODE_RGBW) {
+          acc = accW[i] + valW;
+          wOut = (uint8_t)(acc >> 8);
+          accW[i] = acc - ((uint32_t)wOut << 8);
+        }
+      } else {
+        rOut = (uint8_t)(valR >> 8);
+        gOut = (uint8_t)(valG >> 8);
+        bOut = (uint8_t)(valB >> 8);
+        if (ledMode == MODE_RGBW) wOut = (uint8_t)(valW >> 8);
+      }
+
+      uint8_t bytes[4] = { gOut, rOut, bOut, wOut };
 
       for (int j = 0; j < bytesPerLed; j++) {
         for (int bit = 7; bit >= 0; bit--) {

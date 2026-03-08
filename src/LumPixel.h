@@ -36,6 +36,8 @@ public:
     LumPixel(int numLeds, int gpioPin, LedMode mode = MODE_RGB, rmt_channel_t channel = RMT_CHANNEL_0);
     ~LumPixel();
 
+    void setDithering(bool active) { _ditheringEnabled = active; }
+
     void show();
     void setLed(int led, uint8_t r, uint8_t g, uint8_t b);
     void fill(uint8_t r, uint8_t g, uint8_t b);
@@ -44,12 +46,16 @@ private:
     TaskHandle_t _taskHandle = NULL;
     SemaphoreHandle_t _mutex;
 
+    bool _ditheringEnabled = true;
+    uint32_t *accR, *accG, *accB, *accW;
+
     static void renderTask(void* pvParameters);
     void internalShow();
     void initGammaTable();
     void setupRMT();
 
-    float GAMMA = 2.2f; //2.8
+    float MIN_VISIBLE = 0.0f;
+    float GAMMA = 2.2f;
     float CORRECTION_R = 1.0f;
     float CORRECTION_G = 1.0f; //0.65
     float CORRECTION_B = 1.0f; //0.75
@@ -63,7 +69,6 @@ private:
     uint16_t gammaTableR[256];
     uint16_t gammaTableG[256];
     uint16_t gammaTableB[256];
-    uint8_t ditherFrameCounter = 0;
     
     LedMode ledMode;
     int bitsPerLed;
